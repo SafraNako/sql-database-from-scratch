@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    # SQLite (through Python's sqlite3 module) is the oracle of the tests: it opens the files this engine writes, answers the same random SQL and recovers its crashed commits
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install package and dev dependencies
+        run: pip install -e ".[dev]"
+      - name: Which SQLite is the oracle
+        run: python -c "import sqlite3; print('SQLite', sqlite3.sqlite_version)"
+      - name: Run test suite
+        run: pytest -v
+      - name: Benchmark (smoke run)
+        run: python benchmarks/bench.py 2000
