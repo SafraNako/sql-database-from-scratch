@@ -4,8 +4,22 @@ import sqlite3
 
 import kendi_db
 
-MODERN_SQLITE = (3, 50, 0)                   # the SQLite this engine was written against: older ones differ in corners that the fuzzer reaches with its odd arguments:
-OLD_SQLITE_DIFFERS = ("substr(", "replace(")  # substr() with huge or fractional start and length, and replace() with an empty pattern (older ones return the value itself, not text)
+
+def old_sqlite_differences():
+    """The things that the SQLite library behind Python's ``sqlite3`` does differently from the 3.50 that this engine copies, found by asking it (a version number would be a
+    guess: 3.39 and 3.50 treat a BLOB operand of LIKE as text, 3.45 makes the result false). Statements that use them are left out of the comparison."""
+    probe = sqlite3.connect(":memory:")
+    skip = []
+    if probe.execute("SELECT x'41' LIKE 'a', x'41' GLOB 'A'").fetchone() != (1, 1):
+        skip += ["like", "glob"]                                        # a BLOB on either side of LIKE / GLOB: false in some versions, even with NULL on the other side
+    if probe.execute("SELECT typeof(replace(5, x'00ff', 'b'))").fetchone() != ("text",):
+        skip.append("replace(")                                         # an empty pattern: the value itself comes back, not text
+    if probe.execute("SELECT substr('abc', 1e30), substr('abc', -1e30), substr('abcdef', -9223372036854775808)").fetchone() != ("", "", ""):
+        skip.append("substr(")                                          # huge or fractional start and length
+    return tuple(skip)
+
+
+SKIPPED = old_sqlite_differences()
 
 
 def normalize(v):
@@ -88,8 +102,8 @@ class Pair:
 
     def compare(self, sql, ordered=None, strict=False):
         """``None`` if they agree, else a description of the difference (``strict``: an integer and a real that are equal are still different)."""
-        if sqlite3.sqlite_version_info < MODERN_SQLITE and any(f in sql.lower() for f in OLD_SQLITE_DIFFERS):
-            return None
+        if SKIPPED and any(f in sql.lower() for f in SKIPPED):
+            return None                                                          # (not run by either engine, so the databases stay the same)
         mine, mine_err, ref, ref_err = self.run(sql)
         if mine_err is not None and not isinstance(mine_err, kendi_db.DatabaseError):
             return "CRASH %s: %r" % (type(mine_err).__name__, mine_err)
